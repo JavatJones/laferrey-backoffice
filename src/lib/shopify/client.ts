@@ -1,4 +1,5 @@
 import 'server-only'
+import { getShopifyEnv } from '@/lib/env'
 
 // Versión estable de la Admin API. Shopify publica una nueva cada trimestre.
 const API_VERSION = '2026-10'
@@ -6,7 +7,9 @@ const API_VERSION = '2026-10'
 // Renovamos el token 5 minutos antes de que expire (Shopify los emite por 24 h).
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000
 
-const REQUIRED_ENV = ['SHOPIFY_STORE_DOMAIN', 'SHOPIFY_API_KEY', 'SHOPIFY_API_SECRET'] as const
+// Shopify limita por costo de consulta; reintentamos con espera creciente.
+const MAX_THROTTLE_RETRIES = 5
+const THROTTLE_BASE_DELAY_MS = 500
 
 export class ShopifyError extends Error {
   constructor(message: string) {
@@ -15,21 +18,7 @@ export class ShopifyError extends Error {
   }
 }
 
-export const getMissingShopifyEnv = () => REQUIRED_ENV.filter((name) => !process.env[name])
-
-const getConfig = () => {
-  const missing = getMissingShopifyEnv()
-  if (missing.length > 0) {
-    throw new ShopifyError(`Faltan variables de entorno: ${missing.join(', ')}`)
-  }
-
-  return {
-    // Acepta "mi-tienda.myshopify.com" o "https://mi-tienda.myshopify.com/".
-    storeDomain: process.env.SHOPIFY_STORE_DOMAIN!.replace(/^https?:\/\//, '').replace(/\/+$/, ''),
-    clientId: process.env.SHOPIFY_API_KEY!,
-    clientSecret: process.env.SHOPIFY_API_SECRET!,
-  }
-}
+const getConfig = getShopifyEnv
 
 type CachedToken = { value: string; expiresAt: number }
 
@@ -38,7 +27,7 @@ let pendingToken: Promise<CachedToken> | null = null
 
 const OAUTH_ERROR_HINTS: Record<string, string> = {
   app_not_installed:
-    'La app no está instalada en la tienda: en dev.shopify.com publica una versión de la app con los permisos read_orders y read_products e instálala en la tienda.',
+    'La app no está instalada en la tienda: en dev.shopify.com publica una versión de la app con los permisos del plan (sección 4.7) e instálala en la tienda.',
   invalid_client: 'Revisa que SHOPIFY_API_KEY y SHOPIFY_API_SECRET sean el Client ID y el Client secret de la app.',
 }
 
@@ -100,13 +89,16 @@ const getAccessToken = async () => {
 
 type GraphQLResponse<T> = {
   data?: T
-  errors?: { message: string }[]
+  errors?: { message: string; extensions?: { code?: string } }[]
 }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export const shopifyAdminQuery = async <T>(
   query: string,
   variables?: Record<string, unknown>,
-  retryOnUnauthorized = true
+  retryOnUnauthorized = true,
+  attempt = 0
 ): Promise<T> => {
   const { storeDomain } = getConfig()
   const token = await getAccessToken()
@@ -123,18 +115,35 @@ export const shopifyAdminQuery = async <T>(
   // El token pudo haber sido revocado: pedimos uno nuevo una sola vez.
   if (response.status === 401 && retryOnUnauthorized) {
     cachedToken = null
-    return shopifyAdminQuery<T>(query, variables, false)
+    return shopifyAdminQuery<T>(query, variables, false, attempt)
   }
 
-  if (!response.ok) {
+  const throttledByStatus = response.status === 429
+  if (!response.ok && !throttledByStatus) {
     throw new ShopifyError(`Shopify respondió ${response.status}: ${await response.text()}`)
   }
 
-  const { data, errors } = (await response.json()) as GraphQLResponse<T>
+  const { data, errors } = throttledByStatus
+    ? ({ errors: [{ message: 'Throttled', extensions: { code: 'THROTTLED' } }] } as GraphQLResponse<T>)
+    : ((await response.json()) as GraphQLResponse<T>)
+
+  if (errors?.some((error) => error.extensions?.code === 'THROTTLED')) {
+    if (attempt >= MAX_THROTTLE_RETRIES) {
+      throw new ShopifyError('Shopify limitó las solicitudes (THROTTLED); intenta de nuevo en unos segundos.')
+    }
+    await sleep(THROTTLE_BASE_DELAY_MS * 2 ** attempt)
+    return shopifyAdminQuery<T>(query, variables, retryOnUnauthorized, attempt + 1)
+  }
+
   const errorMessage = errors?.map((error) => error.message).join(' · ')
 
   if (!data) {
     throw new ShopifyError(errorMessage ?? 'Shopify no devolvió datos.')
+  }
+
+  // Si un campo raíz llegó en null junto con errores, la operación falló.
+  if (errorMessage && Object.values(data as Record<string, unknown>).some((value) => value === null)) {
+    throw new ShopifyError(errorMessage)
   }
 
   // Errores parciales (p. ej. sin acceso a datos protegidos del cliente): los campos
