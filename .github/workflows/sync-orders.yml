@@ -1,0 +1,34 @@
+# Reconciliación de órdenes Shopify → Supabase. Los webhooks traen los cambios al
+# momento; esto recoge lo que se haya perdido. Vercel Hobby solo permite cron diario,
+# por eso se programa aquí.
+#
+# Configura en GitHub (Settings → Secrets and variables → Actions):
+#   - Secret   CRON_SECRET: el mismo valor que en Vercel.
+#   - Variable APP_URL:     la URL de producción, p. ej. https://laferrey-backoffice.vercel.app
+#
+# Cada 30 min son ~1,440 ejecuciones al mes; en repos privados cada una cuenta como
+# 1 minuto de Actions (el plan gratuito incluye 2,000).
+name: Reconciliar órdenes
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-orders:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Llamar al cron del backoffice
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "Falta configurar APP_URL o CRON_SECRET; no se sincroniza."
+            exit 0
+          fi
+          curl --fail-with-body --silent --show-error --max-time 300 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "${APP_URL%/}/api/cron/sync-orders"

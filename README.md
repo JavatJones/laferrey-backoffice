@@ -117,20 +117,22 @@ Las pruebas pgTAP (`supabase/tests/database/`) comprueban el aislamiento entre f
 8. Salir desde el menú de la cuenta lleva a `/auth`.
 9. Limpieza: `pnpm shopify:test-orders --clean`.
 
-## Despliegue
+## Despliegue en Vercel
 
-1. **Supabase hospedado.** Llena `.env.supabase-cli` y corre:
-   ```bash
-   pnpm db:linked link --project-ref <ref>
-   pnpm db:linked db push
-   pnpm db:linked db advisors --linked
-   ```
-   En el dashboard: desactiva el registro (Authentication → Sign In / Providers → *Allow new users to sign up*), deja activo el proveedor Email, define la política de contraseñas (mínimo 10, letras y números) y configura *Site URL* y las *Redirect URLs* con el dominio de producción. Luego, con el `.env` apuntando al hospedado, corre `pnpm seed:admin` (la contraseña se muestra una vez).
-2. **Hosting (p. ej. Vercel).** Configura las variables de la tabla anterior, con `INCLUDE_TEST_ORDERS=false`.
-3. **Webhooks.** `pnpm shopify:webhooks --url https://<dominio>`.
-4. **Reconciliación.** Programa `GET /api/cron/sync-orders` con `Authorization: Bearer <CRON_SECRET>` cada 15–60 min: Vercel Cron (menos de un día requiere plan Pro), Supabase Cron (`pg_cron` + `pg_net`) o GitHub Actions.
-5. **App de Shopify.** Deja solo los permisos de la sección 4.7 del plan (más `write_locations` si se activa el pickup en otra sucursal, y `write_orders` si usas las etiquetas de "listo") y el acceso a datos protegidos de clientes, campos **Nombre** y **Email**.
-6. **Correo.** Configura `SMTP_USER`, `SMTP_PASSWORD` (contraseña de aplicación de Gmail) y, si quieres, `EMAIL_FROM`.
+1. **Supabase hospedado** (ya hecho para `LaFerreyDB`): `pnpm db:linked link --project-ref <ref>`, `pnpm db:linked db push --linked` y `pnpm db:linked db advisors --linked`. Registro público desactivado y contraseñas de 10+ con letras y números.
+2. **Proyecto en Vercel**: *Add New → Project*, importa el repo de GitHub. Vercel detecta Next.js; deja los comandos por defecto y elige Node.js 24.x en *Settings → Build and Deployment*. La rama de producción es `main`.
+3. **Variables de entorno** (*Settings → Environment Variables*, entorno **Production**). Puedes pegar el contenido de `.env` y luego ajustar:
+   - `INCLUDE_TEST_ORDERS=false`.
+   - `SHOPIFY_FULFILLMENT_SYNC=true` para que "Entregado" cierre la entrega en Shopify y se etiqueten las órdenes listas.
+   - `ENABLE_EXPERIMENTAL_COREPACK=1` para que Vercel use la versión de pnpm de `packageManager`.
+   - **No** subas `SUPABASE_ACCESS_TOKEN` ni `SUPABASE_DB_PASSWORD` (solo son para la CLI).
+   Las `NEXT_PUBLIC_*` se fijan al compilar: si las cambias, vuelve a desplegar.
+4. **Cuenta inicial**: desde tu máquina, con `.env` apuntando al hospedado, `pnpm seed:admin` (la contraseña se muestra una vez).
+5. **Supabase Auth**: en *Authentication → URL Configuration*, pon la URL de Vercel como *Site URL* y en *Redirect URLs*.
+6. **Webhooks**: `pnpm shopify:webhooks --url https://<tu-app>.vercel.app`.
+7. **Reconciliación**: el workflow `.github/workflows/sync-orders.yml` llama a `/api/cron/sync-orders` cada 30 min. En GitHub, *Settings → Secrets and variables → Actions*: secret `CRON_SECRET` (el mismo de Vercel) y variable `APP_URL` (la URL de producción). Pruébalo con *Run workflow*.
+8. **Carga inicial de órdenes**: `pnpm sync:orders --full` (sin `read_all_orders`, Shopify solo entrega los últimos 60 días).
+9. **App de Shopify**: deja solo los permisos de la sección 4.7 del plan (más `write_locations` si activas pickup en otra sucursal y `write_orders` para las etiquetas de "listo") y los datos protegidos **Nombre** y **Email**.
 
 ## Configuración de la tienda que afecta al panel
 
