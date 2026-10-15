@@ -1,4 +1,4 @@
-import { getCronSecret } from '@/lib/env'
+import { EnvError, getCronSecret } from '@/lib/env'
 import { syncOrdersUpdatedSince } from '@/lib/shopify/orders-sync'
 import { safeEqual } from '@/lib/shopify/webhooks'
 
@@ -7,9 +7,20 @@ import { safeEqual } from '@/lib/shopify/webhooks'
 export const maxDuration = 300
 
 export const GET = async (request: Request) => {
+  let secret: string
+  try {
+    secret = getCronSecret()
+  } catch (error) {
+    if (error instanceof EnvError) {
+      console.error('[cron] sync-orders', error.message)
+      return Response.json({ error: 'El servidor no tiene CRON_SECRET configurado' }, { status: 503 })
+    }
+    throw error
+  }
+
   const header = request.headers.get('authorization') ?? ''
   const token = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : ''
-  if (!safeEqual(token, getCronSecret())) {
+  if (!safeEqual(token, secret)) {
     return Response.json({ error: 'No autorizado' }, { status: 401 })
   }
 
