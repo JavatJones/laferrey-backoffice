@@ -4,7 +4,7 @@
 #
 # Configura en GitHub (Settings → Secrets and variables → Actions):
 #   - Secret   CRON_SECRET: el mismo valor que en Vercel.
-#   - Variable APP_URL:     la URL de producción, p. ej. https://laferrey-backoffice.vercel.app
+#   - Variable APP_URL:     la URL de producción: https://ordenes.laferrey.com
 #
 # Cada 30 min son ~1,440 ejecuciones al mes; en repos privados cada una cuenta como
 # 1 minuto de Actions (el plan gratuito incluye 2,000).
