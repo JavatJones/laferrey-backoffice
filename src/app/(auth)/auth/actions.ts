@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { CHANGE_PASSWORD_PATH, SIGN_IN_PATH, getSessionUser, getUserStore } from '@/lib/auth/dal'
+import { describeSignInError } from '@/lib/auth/sign-in-error'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
 import {
@@ -25,8 +26,13 @@ export const signIn = async (values: SignInValues, next?: string | null): Promis
 
   const supabase = await createClient()
   const { data, error } = await supabase.auth.signInWithPassword(parsed.data)
-  // Mensaje genérico: no revela si el correo existe.
-  if (error || !data.user) return { ok: false, error: 'Correo o contraseña incorrectos' }
+  if (error || !data.user) {
+    // Solo el código y el estado: nunca el correo ni la contraseña en los logs.
+    if (error?.code !== 'invalid_credentials') {
+      console.error('[auth] signIn', { code: error?.code, status: error?.status, name: error?.name })
+    }
+    return { ok: false, error: describeSignInError(error ?? {}) }
+  }
 
   const { data: profile } = await supabase
     .from('profiles')
