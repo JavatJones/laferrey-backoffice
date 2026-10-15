@@ -12,7 +12,8 @@ name: Reconciliar órdenes
 
 on:
   schedule:
-    - cron: '*/30 * * * *'
+    # Fuera de los minutos :00 y :30, cuando GitHub más retrasa los workflows programados.
+    - cron: '13,43 * * * *'
   workflow_dispatch:
 
 jobs:
