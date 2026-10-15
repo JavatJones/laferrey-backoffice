@@ -279,6 +279,9 @@ const writeSyncState = async (state: { cursor?: string | null; last_error: strin
 // Reconciliación: sincroniza las órdenes actualizadas desde el último cursor (o todas
 // con `full`) y guarda el nuevo cursor en shopify_sync_state.
 export const syncOrdersUpdatedSince = async ({ full = false }: { full?: boolean } = {}): Promise<BulkSyncSummary> => {
+  // Si la revisión termina sin errores, todo lo actualizado antes de este momento ya se
+  // procesó: el cursor puede avanzar hasta aquí aunque no haya habido órdenes.
+  const startedAt = new Date().toISOString()
   const previousCursor = full ? null : await readCursor()
   const since = previousCursor ? new Date(new Date(previousCursor).getTime() - CURSOR_OVERLAP_MS).toISOString() : null
   const stores = await loadStores()
@@ -310,6 +313,9 @@ export const syncOrdersUpdatedSince = async ({ full = false }: { full?: boolean 
       after = orders.pageInfo.hasNextPage ? orders.pageInfo.endCursor : null
     } while (after)
 
+    if (summary.failures.length === 0 && (!summary.cursor || startedAt > summary.cursor)) {
+      summary.cursor = startedAt
+    }
     await writeSyncState({
       cursor: summary.cursor,
       last_error: summary.failures.length > 0 ? `${summary.failures.length} órdenes con error` : null,
